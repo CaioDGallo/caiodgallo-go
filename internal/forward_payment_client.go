@@ -74,6 +74,10 @@ func NewPaymentForwarder(endpoint string, retryHandler *RetryHandler) *PaymentFo
 	}
 }
 
+func (pf *PaymentForwarder) GetTotalRequests() uint64 {
+	return atomic.LoadUint64(&pf.totalRequests)
+}
+
 func (pf *PaymentForwarder) ForwardPayment(payload []byte) error {
 	if atomic.LoadUint32(&pf.circuitOpen) == 1 {
 		if time.Now().Unix()-atomic.LoadInt64(&pf.lastFailTime) < 30 {
@@ -92,12 +96,12 @@ func (pf *PaymentForwarder) ForwardPayment(payload []byte) error {
 	req.Header.Set("Content-Length", strconv.Itoa(len(payload)))
 	req.Close = false
 
-	atomic.AddUint64(&pf.totalRequests, 1)
 	resp, err := pf.client.Do(req)
 	if err != nil {
 		log.Default().Println("error doing request ", err.Error())
 		return pf.handleFailure(payload, err)
 	}
+	atomic.AddUint64(&pf.totalRequests, 1)
 
 	buf := pf.bufferPool.Get().([]byte)
 	defer pf.bufferPool.Put(buf)

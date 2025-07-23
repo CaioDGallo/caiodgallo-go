@@ -7,9 +7,10 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"sync/atomic"
 
-	"github.com/CaioDGallo/1cent/internal"
+	"github.com/CaioDGallo/caiodgallo-go/internal"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/panjf2000/gnet/v2"
 )
@@ -91,17 +92,46 @@ func (hs *httpServer) handlePayment(c gnet.Conn, data []byte) gnet.Action {
 		return gnet.None
 	}
 
-	atomic.AddUint64(&totalPayments, 1)
-	atomic.AddUint64(&totalAmount, 10000)
+	byteBody := data[bodyStart:]
+	amountStartingIdx := 65
+	if byteBody[2] != 'c' {
+		amountStartingIdx = 10
+	}
 
-	log.Default().Println("CAIOOO")
-	err := hs.pf.ForwardPayment(data[bodyStart:])
+	log.Default().Println(string(byteBody[65]), string(byteBody[2]), string(byteBody[10]))
+
+	dotIdx := 0
+	amountEndIdx := amountStartingIdx
+	for i := amountStartingIdx; i < len(byteBody); i++ {
+		b := byteBody[i]
+
+		if b == '.' {
+			dotIdx = i
+		}
+
+		if b == ' ' || b == ',' || b == '}' || b == '\t' || b == '\n' || b == '\r' || b == '\f' || b == '\v' {
+			amountEndIdx = i - 1
+			break
+		}
+	}
+
+	amountByteArr := append(byteBody[amountStartingIdx:dotIdx], byteBody[dotIdx+1:amountEndIdx+1]...)
+
+	err := hs.pf.ForwardPayment(byteBody)
 	if err != nil {
 		log.Default().Println("err ForwardPayment ", err.Error())
-		err := hs.rh.EnqueueRetry(data[bodyStart:])
+		err := hs.rh.EnqueueRetry(byteBody)
 		if err != nil {
 			log.Default().Println("failed enqueing retry: ", err.Error())
 		}
+	} else {
+		atomic.AddUint64(&totalPayments, 1)
+
+		amount, err := strconv.ParseUint(string(amountByteArr), 10, 64)
+		if err != nil {
+			log.Default().Println("error parsing amount", err.Error())
+		}
+		atomic.AddUint64(&totalAmount, amount)
 	}
 
 	c.Write(http200)
@@ -109,16 +139,17 @@ func (hs *httpServer) handlePayment(c gnet.Conn, data []byte) gnet.Action {
 }
 
 func (hs *httpServer) handleSummary(c gnet.Conn) gnet.Action {
-	payments := atomic.LoadUint64(&totalPayments)
+	// payments := atomic.LoadUint64(&totalPayments)
 	amount := atomic.LoadUint64(&totalAmount)
-	failed := atomic.LoadUint64(&failedPayments)
+	totalRequests := hs.pf.GetTotalRequests()
+	// failed := atomic.LoadUint64(&failedPayments)
 
 	hs.summaryBuffer = hs.summaryBuffer[:0]
 	hs.summaryBuffer = append(hs.summaryBuffer, httpOK...)
 
 	json := fmt.Sprintf(
-		`{"total_payments":%d,"total_amount_cents":%d,"failed_payments":%d,"instance":"%s"}`,
-		payments, amount, failed, hs.instanceID,
+		`{"default":{ "totalRequests": %d,"totalAmount":%d},"fallback":{ "totalRequests": %d,"totalAmount":%d}}`,
+		totalRequests, amount, 0, 0,
 	)
 
 	hs.summaryBuffer = fmt.Appendf(hs.summaryBuffer, "Content-Length: %d\r\n\r\n%s", len(json), json)

@@ -1,4 +1,4 @@
-module github.com/CaioDGallo/1cent
+module github.com/CaioDGallo/caiodgallo-go
 
 go 1.24.4
 

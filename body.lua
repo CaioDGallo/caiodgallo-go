@@ -1,5 +1,5 @@
 wrk.method = "POST"
-wrk.body = '{"correlationId": "4a7901b8-7d26-4d9d-aa19-4dc1c7cf60b3", "amount": 19.90}'
+wrk.body = '{"correlationId":"4a7901b8-7d26-4d9d-aa19-4dc1c7cf60b3","amount": 19.90}'
 wrk.headers["Content-Type"] = "application/json"
 
 -- Log responses
