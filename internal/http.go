@@ -185,6 +185,7 @@ func (hs *HTTPServer) handleSummary(c gnet.Conn, data []byte) gnet.Action {
 		log.Default().Println("error getting payment count", err.Error())
 	}
 
+	// FIXME: This might still be wrong ...
 	totalInCents := paymentCount * int(hs.knownReqAmountVal)
 	feePercentage := decimal.NewFromInt(int64(hs.pf.transactionFee)).Div(decimal.NewFromInt(100))
 	feesInCents := decimal.NewFromInt(int64(totalInCents)).Mul(feePercentage)
