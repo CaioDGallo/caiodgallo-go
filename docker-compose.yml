@@ -8,7 +8,7 @@ services:
     networks:
       - payment-processor
     volumes:
-      - ./shared:/shared
+      - ./shared:/data
     deploy:
       resources:
         limits:
@@ -31,7 +31,7 @@ services:
     networks:
       - payment-processor
     volumes:
-      - ./shared:/shared
+      - ./shared:/data
     deploy:
       resources:
         limits:

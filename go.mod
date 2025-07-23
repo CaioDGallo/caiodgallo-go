@@ -5,6 +5,7 @@ go 1.24.4
 require (
 	github.com/mattn/go-sqlite3 v1.14.28
 	github.com/panjf2000/gnet/v2 v2.9.1
+	github.com/shopspring/decimal v1.4.0
 )
 
 require (

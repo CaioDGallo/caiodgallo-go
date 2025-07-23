@@ -28,7 +28,7 @@ COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /build/app /app
 
 RUN addgroup -S appuser && adduser -S appuser -G appuser; \
-  mkdir -p /shared && chown appuser:appuser /shared
+  mkdir -p /data && chown appuser:appuser /data
 
 USER appuser
 

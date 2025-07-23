@@ -14,7 +14,7 @@ type RetryHandler struct {
 
 func NewRetryHandler(db *sql.DB) *RetryHandler {
 	retryInsertStmt, err := db.Prepare(`
-        INSERT INTO retry_queue (payload, next_retry) VALUES (?, datetime('now', '+30 seconds'))
+        INSERT INTO retry_queue (payload, next_retry) VALUES (?, datetime('now', '+10 seconds'))
     `)
 	if err != nil {
 		log.Fatal("unable to prepare retry statement", err.Error())
@@ -37,7 +37,7 @@ func (rh *RetryHandler) EnqueueRetry(payload []byte) error {
 }
 
 func (rh *RetryHandler) ProcessRetryQueue() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	stmt, _ := rh.db.Prepare(`
