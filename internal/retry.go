@@ -109,6 +109,8 @@ func (rh *RetryHandler) ProcessRetryQueue() {
 
 func (rh *RetryHandler) processRetryItem(payload string) bool {
 	// FIXME: async database stuff on goroutines is causing inconsistency issues
+	return true
+
 	log.Default().Println("trying to process retry")
 	requestedAt := time.Now()
 	err := rh.pf.ForwardPayment([]byte(payload), requestedAt)
