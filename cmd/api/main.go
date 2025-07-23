@@ -35,7 +35,11 @@ func main() {
 	mainPF := internal.NewPaymentForwarder("http://payment-processor-default:8080", rh)
 	// fallbackPF := internal.NewPaymentForwarder("http://payment-processor-fallback:8080", rh)
 
+	rh.SetPaymentForwarder(mainPF)
+
 	plh := internal.NewPaymentLogHandler(db)
+
+	rh.SetPaymentLogHandler(plh)
 
 	hs := internal.NewHTTPServer(
 		instanceID,

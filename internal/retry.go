@@ -10,6 +10,8 @@ type RetryHandler struct {
 	db              *sql.DB
 	retryInsertStmt *sql.Stmt
 	InstanceID      string
+	pf              *PaymentForwarder
+	plh             *PaymentLogHandler
 }
 
 func NewRetryHandler(db *sql.DB) *RetryHandler {
@@ -26,6 +28,14 @@ func NewRetryHandler(db *sql.DB) *RetryHandler {
 	}
 }
 
+func (rh *RetryHandler) SetPaymentForwarder(pf *PaymentForwarder) {
+	rh.pf = pf
+}
+
+func (rh *RetryHandler) SetPaymentLogHandler(plh *PaymentLogHandler) {
+	rh.plh = plh
+}
+
 func (rh *RetryHandler) EnqueueRetry(payload []byte) error {
 	_, err := rh.retryInsertStmt.Exec(string(payload))
 	if err != nil {
@@ -37,7 +47,7 @@ func (rh *RetryHandler) EnqueueRetry(payload []byte) error {
 }
 
 func (rh *RetryHandler) ProcessRetryQueue() {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	stmt, _ := rh.db.Prepare(`
@@ -47,7 +57,7 @@ func (rh *RetryHandler) ProcessRetryQueue() {
             SELECT id FROM retry_queue 
             WHERE next_retry <= datetime('now') 
             AND processing_by IS NULL 
-            LIMIT 10
+            LIMIT 300
         )
     `)
 	defer stmt.Close()
@@ -98,8 +108,22 @@ func (rh *RetryHandler) ProcessRetryQueue() {
 }
 
 func (rh *RetryHandler) processRetryItem(payload string) bool {
-	// Implement your retry logic here
-	// Return true if successful, false to retry
+	// FIXME: async database stuff on goroutines is causing inconsistency issues
+	log.Default().Println("trying to process retry")
+	requestedAt := time.Now()
+	err := rh.pf.ForwardPayment([]byte(payload), requestedAt)
+	if err != nil {
+		log.Default().Println("err Retry ForwardPayment ", err.Error())
+		return false
+	}
+
+	// FIXME: Will need to get pp dinamically when we start using the fallback
+	err = rh.plh.RegisterPayment("default")
+	if err != nil {
+		log.Default().Println("error registering payment Retry", err.Error())
+		return false
+	}
+
 	return true
 }
 
