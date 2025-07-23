@@ -1,0 +1,77 @@
+services:
+  app1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: go-app-1
+    restart: unless-stopped
+    networks:
+      - payment-processor
+    volumes:
+      - ./shared:/shared
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 125M
+        reservations:
+          cpus: "0.25"
+          memory: 100M
+    environment:
+      - APP_ENV=production
+      - PORT=8080
+      - INSTANCE_ID=1
+
+  app2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: go-app-2
+    restart: unless-stopped
+    networks:
+      - payment-processor
+    volumes:
+      - ./shared:/shared
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 125M
+        reservations:
+          cpus: "0.25"
+          memory: 100M
+    environment:
+      - APP_ENV=production
+      - PORT=8080
+      - INSTANCE_ID=2
+
+  haproxy:
+    image: haproxy:2.9-alpine
+    container_name: haproxy-lb
+    restart: unless-stopped
+    ports:
+      - "9999:80"
+    networks:
+      - payment-processor
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 100M
+        reservations:
+          cpus: "0.25"
+          memory: 70M
+    depends_on:
+      - app1
+      - app2
+
+# volumes:
+#   sqlite-data:
+#     driver: local
+
+networks:
+  payment-processor:
+    name: payment-processor
+    driver: bridge
