@@ -186,6 +186,10 @@ func (hs *HTTPServer) handleSummary(c gnet.Conn, data []byte) gnet.Action {
 	}
 
 	// FIXME: This might still be wrong ...
+	// OLD
+	// totalInCents := paymentCount * int(hs.knownReqAmountVal)
+	// feesInCents := paymentCount * int(hs.pf.transactionFee)
+	// amount := decimal.NewFromInt(int64(totalInCents - feesInCents)).Div(decimal.NewFromInt(100))
 	totalInCents := paymentCount * int(hs.knownReqAmountVal)
 	feePercentage := decimal.NewFromInt(int64(hs.pf.transactionFee)).Div(decimal.NewFromInt(100))
 	feesInCents := decimal.NewFromInt(int64(totalInCents)).Mul(feePercentage)
