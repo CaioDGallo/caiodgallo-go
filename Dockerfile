@@ -1,6 +1,6 @@
 FROM golang:1.24.4-alpine AS builder
 
-RUN apk add --no-cache git ca-certificates tzdata gcc musl-dev sqlite-dev
+RUN apk add --no-cache git ca-certificates tzdata gcc musl-dev
 
 WORKDIR /build
 
@@ -11,7 +11,6 @@ COPY . .
 
 RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build \
   -ldflags="-s -w" \
-  -tags "sqlite_omit_load_extension" \
   -trimpath \
   -o app \
   ./cmd/api/main.go
@@ -36,7 +35,6 @@ EXPOSE 8080
 
 ENV GOGC=100 \
   GOMEMLIMIT=90MiB \
-  GOMAXPROCS=1 \
-  GODEBUG=madvdontneed=1
+  GOMAXPROCS=1
 
 ENTRYPOINT ["/app"]
