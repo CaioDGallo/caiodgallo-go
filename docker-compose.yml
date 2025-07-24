@@ -7,16 +7,11 @@ services:
     restart: unless-stopped
     networks:
       - payment-processor
-    volumes:
-      - ./shared:/data
     deploy:
       resources:
         limits:
-          cpus: "0.5"
-          memory: 125M
-        reservations:
-          cpus: "0.25"
-          memory: 100M
+          cpus: "0.4"
+          memory: 80M
     environment:
       - APP_ENV=production
       - PORT=8080
@@ -30,16 +25,11 @@ services:
     restart: unless-stopped
     networks:
       - payment-processor
-    volumes:
-      - ./shared:/data
     deploy:
       resources:
         limits:
-          cpus: "0.5"
-          memory: 125M
-        reservations:
-          cpus: "0.25"
-          memory: 100M
+          cpus: "0.4"
+          memory: 80M
     environment:
       - APP_ENV=production
       - PORT=8080
@@ -58,14 +48,32 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.5"
-          memory: 100M
-        reservations:
-          cpus: "0.25"
+          cpus: "0.35"
           memory: 70M
     depends_on:
       - app1
       - app2
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: >
+      redis-server
+      --maxmemory 120mb
+      --maxmemory-policy allkeys-lru
+      --appendonly no
+      --save ""
+      --tcp-backlog 128
+      --tcp-keepalive 60
+      --timeout 0
+      --databases 1
+    networks:
+      - payment-processor
+    deploy:
+      resources:
+        limits:
+          cpus: "0.35"
+          memory: 120M
 
 # volumes:
 #   sqlite-data:

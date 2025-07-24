@@ -16,6 +16,10 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+type RetryEnqueuer interface {
+	EnqueueRetry(payload []byte) error
+}
+
 var (
 	requestedAtPrefix = []byte(`,"requestedAt":"`)
 	requestedAtSuffix = []byte(`"`)
@@ -43,10 +47,10 @@ type PaymentForwarder struct {
 	totalRequests uint64
 	totalFailures uint64
 
-	retryHandler *RetryHandler
+	retryHandler RetryEnqueuer
 }
 
-func NewPaymentForwarder(endpoint string, retryHandler *RetryHandler) *PaymentForwarder {
+func NewPaymentForwarder(endpoint string, retryHandler RetryEnqueuer) *PaymentForwarder {
 	transport := &http.Transport{
 		MaxIdleConns:        100,              // High idle connections
 		MaxIdleConnsPerHost: 100,              // All to same host

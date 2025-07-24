@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -27,12 +26,9 @@ type PaymentRequest struct {
 
 type HTTPServer struct {
 	*gnet.BuiltinEventEngine
-	instanceID    string
-	db            *sql.DB
 	summaryBuffer []byte
 	pf            *PaymentForwarder
-	rh            *RetryHandler
-	plh           *PaymentLogHandler
+	rph           *RedisPaymentHandler
 
 	knownReqSize int32
 	reqSizeSet   uint32
@@ -41,14 +37,11 @@ type HTTPServer struct {
 	reqAmountValSet   uint32
 }
 
-func NewHTTPServer(instanceID string, db *sql.DB, mainPF *PaymentForwarder, rh *RetryHandler, sb []byte, plh *PaymentLogHandler) *HTTPServer {
+func NewHTTPServer(rph *RedisPaymentHandler, mainPF *PaymentForwarder, sb []byte) *HTTPServer {
 	return &HTTPServer{
-		instanceID:    instanceID,
-		db:            db,
 		summaryBuffer: sb,
 		pf:            mainPF,
-		rh:            rh,
-		plh:           plh,
+		rph:           rph,
 	}
 }
 
@@ -123,15 +116,17 @@ func (hs *HTTPServer) handlePayment(c gnet.Conn, data []byte) gnet.Action {
 	err := hs.pf.ForwardPayment(byteBody, requestedAt)
 	if err != nil {
 		log.Default().Println("err ForwardPayment ", err.Error())
-		err := hs.rh.EnqueueRetry(byteBody)
+		err := hs.rph.EnqueueRetry(byteBody)
 		if err != nil {
 			log.Default().Println("failed enqueing retry: ", err.Error())
 		}
 	} else {
-		// FIXME: Will need to get pp dinamically when we start using the fallback
-		err := hs.plh.RegisterPayment("default")
-		if err != nil {
-			log.Default().Println("error registering payment", err.Error())
+		var paymentReq PaymentRequest
+		if err := json.Unmarshal(byteBody, &paymentReq); err == nil {
+			err := hs.rph.RegisterPayment(paymentReq.CorrelationID, "default", requestedAt)
+			if err != nil {
+				log.Default().Println("error registering payment", err.Error())
+			}
 		}
 	}
 
@@ -180,28 +175,38 @@ func (hs *HTTPServer) handleSummary(c gnet.Conn, data []byte) gnet.Action {
 		}
 	}
 
-	paymentCount, err := hs.plh.GetPaymentCount(fromTime, toTime)
+	defaultCount, err := hs.rph.GetPaymentSummary(fromTime, toTime, "default")
 	if err != nil {
-		log.Default().Println("error getting payment count", err.Error())
+		log.Default().Println("error getting default payment count", err.Error())
+		defaultCount = 0
 	}
 
-	// FIXME: This might still be wrong ...
-	// OLD
-	// totalInCents := paymentCount * int(hs.knownReqAmountVal)
-	// feesInCents := paymentCount * int(hs.pf.transactionFee)
-	// amount := decimal.NewFromInt(int64(totalInCents - feesInCents)).Div(decimal.NewFromInt(100))
-	totalInCents := paymentCount * int(hs.knownReqAmountVal)
+	fallbackCount, err := hs.rph.GetPaymentSummary(fromTime, toTime, "fallback")
+	if err != nil {
+		log.Default().Println("error getting fallback payment count", err.Error())
+		fallbackCount = 0
+	}
+
+	// Calculate default processor amounts
+	defaultTotalInCents := int(defaultCount) * int(hs.knownReqAmountVal)
 	feePercentage := decimal.NewFromInt(int64(hs.pf.transactionFee)).Div(decimal.NewFromInt(100))
-	feesInCents := decimal.NewFromInt(int64(totalInCents)).Mul(feePercentage)
-	netAmountInCents := decimal.NewFromInt(int64(totalInCents)).Sub(feesInCents)
-	amount := netAmountInCents.Div(decimal.NewFromInt(100))
+	feeInCents := decimal.NewFromInt(int64(hs.knownReqAmountVal)).Mul(feePercentage)
+	defaultTotalFeesInCents := feeInCents.Mul(decimal.NewFromInt(defaultCount))
+	defaultNetAmountInCents := decimal.NewFromInt(int64(defaultTotalInCents)).Sub(defaultTotalFeesInCents)
+	defaultAmount := defaultNetAmountInCents.Div(decimal.NewFromInt(100))
+
+	// Calculate fallback processor amounts (assuming same fee structure for now)
+	fallbackTotalInCents := int(fallbackCount) * int(hs.knownReqAmountVal)
+	fallbackTotalFeesInCents := feeInCents.Mul(decimal.NewFromInt(fallbackCount))
+	fallbackNetAmountInCents := decimal.NewFromInt(int64(fallbackTotalInCents)).Sub(fallbackTotalFeesInCents)
+	fallbackAmount := fallbackNetAmountInCents.Div(decimal.NewFromInt(100))
 
 	hs.summaryBuffer = hs.summaryBuffer[:0]
 	hs.summaryBuffer = append(hs.summaryBuffer, httpOK...)
 
 	json := fmt.Sprintf(
-		`{"default":{ "totalRequests": %d,"totalAmount":%s},"fallback":{ "totalRequests": %d,"totalAmount":%d}}`,
-		paymentCount, amount.StringFixed(2), 0, 0,
+		`{"default":{ "totalRequests": %d,"totalAmount":%s},"fallback":{ "totalRequests": %d,"totalAmount":%s}}`,
+		int(defaultCount), defaultAmount, int(fallbackCount), fallbackAmount,
 	)
 
 	hs.summaryBuffer = fmt.Appendf(hs.summaryBuffer, "Content-Length: %d\r\n\r\n%s", len(json), json)
