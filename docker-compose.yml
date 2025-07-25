@@ -10,8 +10,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.4"
-          memory: 80M
+          cpus: "0.3"
+          memory: 30M
     environment:
       - APP_ENV=production
       - PORT=8080
@@ -28,8 +28,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.4"
-          memory: 80M
+          cpus: "0.3"
+          memory: 30M
     environment:
       - APP_ENV=production
       - PORT=8080
@@ -48,8 +48,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.35"
-          memory: 70M
+          cpus: "0.15"
+          memory: 50M
     depends_on:
       - app1
       - app2
@@ -63,8 +63,29 @@ services:
       POSTGRES_USER: dev
       POSTGRES_PASSWORD: secret123
       PGDATA: /var/lib/postgresql/data/pgdata
+      # Memory Configuration (240MB total)
+      POSTGRES_SHARED_BUFFERS: 80MB
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 180MB
+      POSTGRES_WAL_BUFFERS: 16MB
+      POSTGRES_WORK_MEM: 2MB
+      # Connection Management
+      POSTGRES_MAX_CONNECTIONS: 30
+      # Write-Optimized Settings
+      POSTGRES_CHECKPOINT_TIMEOUT: 60s
+      POSTGRES_CHECKPOINT_COMPLETION_TARGET: 0.9
+      POSTGRES_WAL_WRITER_DELAY: 10ms
+      POSTGRES_SYNCHRONOUS_COMMIT: on
+      # Performance Tuning
+      POSTGRES_RANDOM_PAGE_COST: 1.1
+      POSTGRES_EFFECTIVE_IO_CONCURRENCY: 200
+      POSTGRES_DEFAULT_STATISTICS_TARGET: 100
+      # Maintenance & Monitoring
+      POSTGRES_LOG_MIN_DURATION_STATEMENT: 500
+      POSTGRES_LOG_CHECKPOINTS: on
+      POSTGRES_LOG_LOCK_WAITS: on
+      POSTGRES_AUTOVACUUM_VACUUM_SCALE_FACTOR: 0.1
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -72,8 +93,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.35"
-          memory: 120M
+          cpus: "0.85"
+          memory: 240M
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U developer -d onecent"]
       interval: 30s
