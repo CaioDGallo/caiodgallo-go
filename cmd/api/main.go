@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -139,7 +138,7 @@ func NewWorkerPools(db *sql.DB, defaultEndpoint, fallbackEndpoint string, defaul
 		ExpiryDuration: 15 * time.Second,
 		Nonblocking:    true,
 		PanicHandler: func(i interface{}) {
-			log.Printf("Payment creation worker panic: %v", i)
+			// log.Printf("Payment creation worker panic: %v", i)
 		},
 	}))
 	if err != nil {
@@ -151,7 +150,7 @@ func NewWorkerPools(db *sql.DB, defaultEndpoint, fallbackEndpoint string, defaul
 		ExpiryDuration: 30 * time.Second,
 		Nonblocking:    false,
 		PanicHandler: func(i interface{}) {
-			log.Printf("Payment processing worker panic: %v", i)
+			// log.Printf("Payment processing worker panic: %v", i)
 		},
 	}))
 	if err != nil {
@@ -160,11 +159,11 @@ func NewWorkerPools(db *sql.DB, defaultEndpoint, fallbackEndpoint string, defaul
 		return nil, fmt.Errorf("failed to create processing pool: %v", err)
 	}
 
-	retryPool, err := ants.NewPool(5, ants.WithOptions(ants.Options{
+	retryPool, err := ants.NewPool(0, ants.WithOptions(ants.Options{
 		ExpiryDuration: 60 * time.Second,
 		Nonblocking:    false,
 		PanicHandler: func(i interface{}) {
-			log.Printf("Payment retry worker panic: %v", i)
+			// log.Printf("Payment retry worker panic: %v", i)
 		},
 	}))
 	if err != nil {
@@ -196,7 +195,7 @@ func NewWorkerPools(db *sql.DB, defaultEndpoint, fallbackEndpoint string, defaul
 }
 
 func (wp *WorkerPools) Shutdown(timeout time.Duration) error {
-	log.Println("Starting graceful shutdown of worker pools...")
+	// log.Println("Starting graceful shutdown of worker pools...")
 
 	wp.cancel()
 
@@ -208,23 +207,23 @@ func (wp *WorkerPools) Shutdown(timeout time.Duration) error {
 
 	select {
 	case <-done:
-		log.Println("All worker tasks completed successfully")
+		// log.Println("All worker tasks completed successfully")
 	case <-time.After(timeout):
-		log.Println("Timeout reached, forcing shutdown")
+		// log.Println("Timeout reached, forcing shutdown")
 	}
 
 	wp.CreationPool.Release()
 	wp.ProcessingPool.Release()
 	wp.RetryPool.Release()
 
-	log.Println("Worker pools shutdown complete")
+	// log.Println("Worker pools shutdown complete")
 	return nil
 }
 
 func (wp *WorkerPools) ProcessPaymentCreation(task PaymentTask) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("Payment creation worker panic recovered: %v", r)
+			// log.Printf("Payment creation worker panic recovered: %v", r)
 		}
 	}()
 
@@ -247,7 +246,7 @@ func (wp *WorkerPools) ProcessPaymentCreation(task PaymentTask) {
 
 	tx, err := wp.DB.Begin()
 	if err != nil {
-		log.Printf("Failed to begin transaction for payment %s: %v", task.Request.CorrelationID, err)
+		// log.Printf("Failed to begin transaction for payment %s: %v", task.Request.CorrelationID, err)
 		return
 	}
 	defer tx.Rollback()
@@ -257,12 +256,12 @@ func (wp *WorkerPools) ProcessPaymentCreation(task PaymentTask) {
 		task.Request.CorrelationID, processor, task.Request.Amount, fee, task.RequestedAt, "pending",
 	)
 	if err != nil {
-		log.Printf("Failed to insert payment %s: %v", task.Request.CorrelationID, err)
+		// log.Printf("Failed to insert payment %s: %v", task.Request.CorrelationID, err)
 		return
 	}
 
 	if err = tx.Commit(); err != nil {
-		log.Printf("Failed to commit payment creation for %s: %v", task.Request.CorrelationID, err)
+		// log.Printf("Failed to commit payment creation for %s: %v", task.Request.CorrelationID, err)
 		return
 	}
 
@@ -275,14 +274,14 @@ func (wp *WorkerPools) ProcessPaymentCreation(task PaymentTask) {
 		wp.ProcessPaymentDownstream(task)
 	}); err != nil {
 		wp.wg.Done()
-		log.Printf("Failed to submit payment %s to processing pool: %v", task.Request.CorrelationID, err)
+		// log.Printf("Failed to submit payment %s to processing pool: %v", task.Request.CorrelationID, err)
 	}
 }
 
 func (wp *WorkerPools) ProcessPaymentDownstream(task PaymentTask) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("Payment processing worker panic recovered: %v", r)
+			// log.Printf("Payment processing worker panic recovered: %v", r)
 		}
 	}()
 
@@ -291,7 +290,7 @@ func (wp *WorkerPools) ProcessPaymentDownstream(task PaymentTask) {
 
 	tx, err := wp.DB.Begin()
 	if err != nil {
-		log.Printf("Failed to begin processing transaction for payment %s: %v", correlationID, err)
+		// log.Printf("Failed to begin processing transaction for payment %s: %v", correlationID, err)
 		return
 	}
 	defer tx.Rollback()
@@ -301,12 +300,12 @@ func (wp *WorkerPools) ProcessPaymentDownstream(task PaymentTask) {
 		"processing", time.Now(), correlationID,
 	)
 	if err != nil {
-		log.Printf("Failed to update payment %s to processing: %v", correlationID, err)
+		// log.Printf("Failed to update payment %s to processing: %v", correlationID, err)
 		return
 	}
 
 	if err = tx.Commit(); err != nil {
-		log.Printf("Failed to commit processing status for %s: %v", correlationID, err)
+		// log.Printf("Failed to commit processing status for %s: %v", correlationID, err)
 		return
 	}
 
@@ -317,7 +316,7 @@ func (wp *WorkerPools) ProcessPaymentDownstream(task PaymentTask) {
 
 	ppPayload, err := json.Marshal(ppPaymentRequest)
 	if err != nil {
-		log.Printf("Error marshaling request for %s: %v", correlationID, err)
+		// log.Printf("Error marshaling request for %s: %v", correlationID, err)
 		wp.updatePaymentStatus(correlationID, "failed")
 		return
 	}
@@ -345,7 +344,7 @@ func (wp *WorkerPools) ProcessPaymentDownstream(task PaymentTask) {
 
 	req, err := http.NewRequest("POST", fmt.Sprintf("%s/payments", endpoint), bytes.NewReader(ppPayload))
 	if err != nil {
-		log.Printf("Error creating request for %s: %v", correlationID, err)
+		// log.Printf("Error creating request for %s: %v", correlationID, err)
 		wp.updatePaymentStatus(correlationID, "failed")
 		return
 	}
@@ -368,11 +367,11 @@ func (wp *WorkerPools) ProcessPaymentDownstream(task PaymentTask) {
 	})
 
 	if err != nil && processor == "default" && wp.FallbackCircuitBreaker.State() == gobreaker.StateClosed {
-		log.Printf("Default processor failed for %s, trying fallback: %v", correlationID, err)
+		// log.Printf("Default processor failed for %s, trying fallback: %v", correlationID, err)
 
 		req, err = http.NewRequest("POST", fmt.Sprintf("%s/payments", wp.FallbackEndpoint), bytes.NewReader(ppPayload))
 		if err != nil {
-			log.Printf("Error creating fallback request for %s: %v", correlationID, err)
+			// log.Printf("Error creating fallback request for %s: %v", correlationID, err)
 			wp.updatePaymentStatus(correlationID, "failed")
 			return
 		}
@@ -400,7 +399,7 @@ func (wp *WorkerPools) ProcessPaymentDownstream(task PaymentTask) {
 	}
 
 	if err != nil {
-		log.Printf("Payment processing failed for %s: %v", correlationID, err)
+		// log.Printf("Payment processing failed for %s: %v", correlationID, err)
 		wp.updatePaymentStatus(correlationID, "failed")
 		return
 	}
@@ -411,19 +410,19 @@ func (wp *WorkerPools) ProcessPaymentDownstream(task PaymentTask) {
 func (wp *WorkerPools) updatePaymentStatus(correlationID, status string) {
 	tx, err := wp.DB.Begin()
 	if err != nil {
-		log.Printf("CRITICAL: Failed to begin status update transaction for %s: %v", correlationID, err)
+		// log.Printf("CRITICAL: Failed to begin status update transaction for %s: %v", correlationID, err)
 		return
 	}
 	defer tx.Rollback()
 
 	_, err = tx.Exec("UPDATE payment_log SET status = $1 WHERE idempotency_key = $2", status, correlationID)
 	if err != nil {
-		log.Printf("CRITICAL: Failed to update payment status to %s for %s: %v", status, correlationID, err)
+		// log.Printf("CRITICAL: Failed to update payment status to %s for %s: %v", status, correlationID, err)
 		return
 	}
 
 	if err = tx.Commit(); err != nil {
-		log.Printf("CRITICAL: Failed to commit status update to %s for %s: %v", status, correlationID, err)
+		// log.Printf("CRITICAL: Failed to commit status update to %s for %s: %v", status, correlationID, err)
 		return
 	}
 }
@@ -431,19 +430,19 @@ func (wp *WorkerPools) updatePaymentStatus(correlationID, status string) {
 func (wp *WorkerPools) updatePaymentProcessor(correlationID, processor string) {
 	tx, err := wp.DB.Begin()
 	if err != nil {
-		log.Printf("Failed to begin processor update transaction for %s: %v", correlationID, err)
+		// log.Printf("Failed to begin processor update transaction for %s: %v", correlationID, err)
 		return
 	}
 	defer tx.Rollback()
 
 	_, err = tx.Exec("UPDATE payment_log SET payment_processor = $1 WHERE idempotency_key = $2", processor, correlationID)
 	if err != nil {
-		log.Printf("Failed to update payment processor to %s for %s: %v", processor, correlationID, err)
+		// log.Printf("Failed to update payment processor to %s for %s: %v", processor, correlationID, err)
 		return
 	}
 
 	if err = tx.Commit(); err != nil {
-		log.Printf("Failed to commit processor update to %s for %s: %v", processor, correlationID, err)
+		// log.Printf("Failed to commit processor update to %s for %s: %v", processor, correlationID, err)
 		return
 	}
 }
@@ -451,19 +450,19 @@ func (wp *WorkerPools) updatePaymentProcessor(correlationID, processor string) {
 func (wp *WorkerPools) updatePaymentProcessorAndFee(correlationID, processor string, fee float64) {
 	tx, err := wp.DB.Begin()
 	if err != nil {
-		log.Printf("Failed to begin processor/fee update transaction for %s: %v", correlationID, err)
+		// log.Printf("Failed to begin processor/fee update transaction for %s: %v", correlationID, err)
 		return
 	}
 	defer tx.Rollback()
 
 	_, err = tx.Exec("UPDATE payment_log SET payment_processor = $1, fee = $2 WHERE idempotency_key = $3", processor, fee, correlationID)
 	if err != nil {
-		log.Printf("Failed to update payment processor to %s and fee to %f for %s: %v", processor, fee, correlationID, err)
+		// log.Printf("Failed to update payment processor to %s and fee to %f for %s: %v", processor, fee, correlationID, err)
 		return
 	}
 
 	if err = tx.Commit(); err != nil {
-		log.Printf("Failed to commit processor/fee update to %s/%f for %s: %v", processor, fee, correlationID, err)
+		// log.Printf("Failed to commit processor/fee update to %s/%f for %s: %v", processor, fee, correlationID, err)
 		return
 	}
 }
@@ -540,7 +539,7 @@ func (wp *WorkerPools) checkCircuitBreakerStates() {
 		currentFallbackState == gobreaker.StateClosed
 
 	if defaultBecameAvailable || fallbackBecameAvailable {
-		log.Printf("Circuit breaker became available - triggering immediate retry burst")
+		// log.Printf("Circuit breaker became available - triggering immediate retry burst")
 		go wp.processFailedPayments()
 	}
 
@@ -566,7 +565,7 @@ func (wp *WorkerPools) checkProcessorHealth() {
 func (wp *WorkerPools) checkSingleProcessorHealth(endpoint, processorType string) {
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s/payments/service-health", endpoint), nil)
 	if err != nil {
-		log.Printf("Error creating health check request for %s: %v", processorType, err)
+		// log.Printf("Error creating health check request for %s: %v", processorType, err)
 		return
 	}
 
@@ -574,26 +573,26 @@ func (wp *WorkerPools) checkSingleProcessorHealth(endpoint, processorType string
 
 	resp, err := wp.Client.Do(req)
 	if err != nil {
-		log.Printf("Health check failed for %s processor: %v", processorType, err)
+		// log.Printf("Health check failed for %s processor: %v", processorType, err)
 		wp.updateProcessorHealth(processorType, ProcessorHealth{IsValid: false})
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 429 {
-		log.Printf("Health check rate limited for %s processor", processorType)
+		// log.Printf("Health check rate limited for %s processor", processorType)
 		return
 	}
 
 	if resp.StatusCode != 200 {
-		log.Printf("Health check returned status %d for %s processor", resp.StatusCode, processorType)
+		// log.Printf("Health check returned status %d for %s processor", resp.StatusCode, processorType)
 		wp.updateProcessorHealth(processorType, ProcessorHealth{IsValid: false})
 		return
 	}
 
 	var health ProcessorHealth
 	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
-		log.Printf("Error decoding health response for %s processor: %v", processorType, err)
+		// log.Printf("Error decoding health response for %s processor: %v", processorType, err)
 		wp.updateProcessorHealth(processorType, ProcessorHealth{IsValid: false})
 		return
 	}
@@ -606,7 +605,7 @@ func (wp *WorkerPools) checkSingleProcessorHealth(endpoint, processorType string
 	if processorType == "default" && !health.Failing {
 		previousHealth := wp.getProcessorHealth("default")
 		if !previousHealth.IsValid || previousHealth.Failing {
-			log.Printf("Default processor became healthy - triggering priority retry burst")
+			// log.Printf("Default processor became healthy - triggering priority retry burst")
 			go func() {
 				instanceID := os.Getenv("INSTANCE_ID")
 				if instanceID == "2" {
@@ -647,12 +646,12 @@ func (wp *WorkerPools) processFailedPayments() {
 		ORDER BY requested_at ASC 
 		LIMIT 100`)
 	if err != nil {
-		log.Printf("Failed to query failed payments: %v", err)
+		// log.Printf("Failed to query failed payments: %v", err)
 		return
 	}
 	defer rows.Close()
 
-	log.Default().Println("starting retry")
+	// log.Default().Println("starting retry")
 
 	processedCount := 0
 	for rows.Next() {
@@ -662,7 +661,7 @@ func (wp *WorkerPools) processFailedPayments() {
 		var requestedAt time.Time
 
 		if err := rows.Scan(&correlationID, &amount, &fee, &requestedAt); err != nil {
-			log.Printf("Failed to scan failed payment row: %v", err)
+			// log.Printf("Failed to scan failed payment row: %v", err)
 			continue
 		}
 
@@ -676,14 +675,14 @@ func (wp *WorkerPools) processFailedPayments() {
 		}
 
 		wp.wg.Add(1)
-		log.Default().Println("retrying")
+		// log.Default().Println("retrying")
 		if err := wp.RetryPool.Submit(func() {
 			defer wp.wg.Done()
 			wp.ProcessPaymentDownstream(task)
-			log.Default().Println("finished retrying attempt")
+			// log.Default().Println("finished retrying attempt")
 		}); err != nil {
 			wp.wg.Done()
-			log.Printf("Failed to submit retry for payment %s: %v", correlationID, err)
+			// log.Printf("Failed to submit retry for payment %s: %v", correlationID, err)
 		}
 
 		processedCount++
@@ -702,7 +701,7 @@ func main() {
 	connStr := "postgresql://dev:secret123@postgres/onecent?sslmode=disable"
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
-		log.Default().Fatal("failed to open db connection", err)
+		// log.Default().Fatal("failed to open db connection", err)
 	}
 
 	db.SetMaxOpenConns(50)
@@ -727,49 +726,49 @@ func main() {
 				CREATE INDEX IF NOT EXISTS idx_pending_failed_processing ON payment_log(status, processing_started_at) WHERE status IN ('pending', 'failed');
     `)
 	if err != nil {
-		log.Default().Fatal("failed to create tables", err)
+		// log.Default().Fatal("failed to create tables", err)
 	}
 
 	insertPreparedStmt, err := db.Prepare(insertPayment)
 	if err != nil {
-		log.Default().Fatal("failed to prepare insert statement", err)
+		// log.Default().Fatal("failed to prepare insert statement", err)
 	}
 	defer insertPreparedStmt.Close()
 
 	updatePreparedStmt, err := db.Prepare(updatePayment)
 	if err != nil {
-		log.Default().Fatal("failed to prepare update statement", err)
+		// log.Default().Fatal("failed to prepare update statement", err)
 	}
 	defer updatePreparedStmt.Close()
 
 	statsAllPreparedStmt, err := db.Prepare(statsAll)
 	if err != nil {
-		log.Default().Fatal("failed to prepare stats all statement", err)
+		// log.Default().Fatal("failed to prepare stats all statement", err)
 	}
 	defer statsAllPreparedStmt.Close()
 
 	statsFromPreparedStmt, err := db.Prepare(statsFrom)
 	if err != nil {
-		log.Default().Fatal("failed to prepare stats from statement", err)
+		// log.Default().Fatal("failed to prepare stats from statement", err)
 	}
 	defer statsFromPreparedStmt.Close()
 
 	statsToPreparedStmt, err := db.Prepare(statsTo)
 	if err != nil {
-		log.Default().Fatal("failed to prepare stats to statement", err)
+		// log.Default().Fatal("failed to prepare stats to statement", err)
 	}
 	defer statsToPreparedStmt.Close()
 
 	statsBothPreparedStmt, err := db.Prepare(statsBoth)
 	if err != nil {
-		log.Default().Fatal("failed to prepare stats both statement", err)
+		// log.Default().Fatal("failed to prepare stats both statement", err)
 	}
 	defer statsBothPreparedStmt.Close()
 
 	transport := &http.Transport{
-		MaxIdleConns:        20,
+		MaxIdleConns:        50,
 		MaxIdleConnsPerHost: 20,
-		MaxConnsPerHost:     0,
+		MaxConnsPerHost:     40,
 		IdleConnTimeout:     90 * time.Second,
 
 		ResponseHeaderTimeout: 1500 * time.Millisecond,
@@ -829,17 +828,17 @@ func main() {
 
 	defaultFee, err = GetPPFee(defaultPPEndpoint)
 	if err != nil {
-		log.Default().Fatal("failed getting the default processor transaction fee ", err)
+		// log.Default().Fatal("failed getting the default processor transaction fee ", err)
 	}
 
 	fallbackFee, err = GetPPFee(fallbackPPEndpoint)
 	if err != nil {
-		log.Default().Fatal("failed getting the fallback processor transaction fee ", err)
+		// log.Default().Fatal("failed getting the fallback processor transaction fee ", err)
 	}
 
 	workerPools, err = NewWorkerPools(db, defaultPPEndpoint, fallbackPPEndpoint, defaultFee, fallbackFee, client, defaultCB, fallbackCB)
 	if err != nil {
-		log.Default().Fatal("failed to initialize worker pools: ", err)
+		// log.Default().Fatal("failed to initialize worker pools: ", err)
 	}
 
 	// workerPools.StartRetryWorker()
@@ -883,14 +882,14 @@ func main() {
 		if fromParam != "" {
 			fromTime, err = time.Parse("2006-01-02T15:04:05.000Z", fromParam)
 			if err != nil {
-				log.Default().Fatal("failed parsing from", err.Error())
+				// log.Default().Fatal("failed parsing from", err.Error())
 			}
 		}
 
 		if toParam != "" {
 			toTime, err = time.Parse("2006-01-02T15:04:05.000Z", toParam)
 			if err != nil {
-				log.Default().Fatal("failed parsing to", err.Error())
+				// log.Default().Fatal("failed parsing to", err.Error())
 			}
 		}
 
@@ -911,7 +910,7 @@ func main() {
 		}
 
 		if err != nil {
-			log.Default().Printf("failed querying payment stats: %v", err)
+			// log.Default().Printf("failed querying payment stats: %v", err)
 			return c.Status(500).Send([]byte("Internal server error"))
 		}
 		defer rows.Close()
@@ -932,13 +931,13 @@ func main() {
 
 			err = rows.Scan(&processor, &count, &totalAmountString)
 			if err != nil {
-				log.Default().Printf("failed scanning payment stats row: %v", err)
+				// log.Default().Printf("failed scanning payment stats row: %v", err)
 				continue
 			}
 
 			totalAmount, err := decimal.NewFromString(totalAmountString)
 			if err != nil {
-				log.Default().Printf("failed parsing total amount: %v", err)
+				// log.Default().Printf("failed parsing total amount: %v", err)
 				totalAmount = decimal.NewFromInt(0)
 			}
 
@@ -961,7 +960,7 @@ func main() {
 
 		resp, err := json.Marshal(paymentsSummaryResp)
 		if err != nil {
-			log.Default().Fatal("failed marshaling response", err.Error())
+			// log.Default().Fatal("failed marshaling response", err.Error())
 		}
 
 		return c.Send(resp)
@@ -969,7 +968,7 @@ func main() {
 
 	go func() {
 		if err := app.Listen(":8080"); err != nil {
-			log.Printf("Server failed to start: %v", err)
+			// log.Printf("Server failed to start: %v", err)
 		}
 	}()
 
@@ -977,30 +976,30 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down server...")
+	// log.Println("Shutting down server...")
 
 	if err := app.Shutdown(); err != nil {
-		log.Printf("Server forced to shutdown: %v", err)
+		// log.Printf("Server forced to shutdown: %v", err)
 	}
 
 	if err := workerPools.Shutdown(30 * time.Second); err != nil {
-		log.Printf("Worker pools shutdown failed: %v", err)
+		// log.Printf("Worker pools shutdown failed: %v", err)
 	}
 
-	log.Println("Server exiting")
+	// log.Println("Server exiting")
 }
 
 func GetPPFee(processorURL string) (float64, error) {
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s/admin/payments-summary", processorURL), nil)
 	if err != nil {
-		log.Default().Println("error creating request GetPPFee", err.Error())
+		// log.Default().Println("error creating request GetPPFee", err.Error())
 	}
 
 	req.Header.Set("X-Rinha-Token", "123")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Default().Println("error doing request GetPPFee", err.Error())
+		// log.Default().Println("error doing request GetPPFee", err.Error())
 	}
 	defer resp.Body.Close()
 
@@ -1010,17 +1009,17 @@ func GetPPFee(processorURL string) (float64, error) {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Default().Println("error reading body GetPPFee", err.Error())
+		// log.Default().Println("error reading body GetPPFee", err.Error())
 	}
 
 	var summary AdminTransactionSummary
 	if err := json.Unmarshal(body, &summary); err != nil {
-		log.Default().Println("error unmarshaling request GetPPFee", err.Error())
+		// log.Default().Println("error unmarshaling request GetPPFee", err.Error())
 	}
 
 	floatFee, exact := summary.FeePerTransaction.Float64()
 	if !exact {
-		log.Default().Println("fee conversion not exact to float64 GetPPFee ", exact)
+		// log.Default().Println("fee conversion not exact to float64 GetPPFee ", exact)
 	}
 
 	return floatFee, nil
