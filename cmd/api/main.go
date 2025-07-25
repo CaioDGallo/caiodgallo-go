@@ -47,7 +47,6 @@ type PaymentsSummaryResponse struct {
 	Fallback PaymentProcessorStats `json:"fallback"`
 }
 
-// FIXME: float64 might be imprecise
 type PaymentProcessorStats struct {
 	TotalRequests int         `json:"totalRequests"`
 	TotalAmount   JSONDecimal `json:"totalAmount"`
@@ -212,7 +211,6 @@ func (wp *WorkerPools) ProcessPaymentCreation(task PaymentTask) {
 		}
 	}()
 
-	// Determine which processor and fee to use
 	var processor string
 	var fee float64
 
@@ -223,7 +221,6 @@ func (wp *WorkerPools) ProcessPaymentCreation(task PaymentTask) {
 		processor = "fallback"
 		fee = wp.FallbackFee
 	} else {
-		// Both circuit breakers are open, use default (better fees) and let downstream handle the failure
 		processor = "default"
 		fee = wp.DefaultFee
 	}
@@ -249,7 +246,6 @@ func (wp *WorkerPools) ProcessPaymentCreation(task PaymentTask) {
 		return
 	}
 
-	// Update task with the processor and fee that will be used
 	task.Processor = processor
 	task.Fee = fee
 
@@ -306,12 +302,10 @@ func (wp *WorkerPools) ProcessPaymentDownstream(task PaymentTask) {
 		return
 	}
 
-	// Determine which processor to use based on circuit breaker state
 	var endpoint string
 	var circuitBreaker *gobreaker.CircuitBreaker[[]byte]
 	var processor string
 
-	// Prefer default processor if circuit breaker is closed
 	if wp.DefaultCircuitBreaker.State() == gobreaker.StateClosed {
 		endpoint = wp.DefaultEndpoint
 		circuitBreaker = wp.DefaultCircuitBreaker
@@ -321,7 +315,6 @@ func (wp *WorkerPools) ProcessPaymentDownstream(task PaymentTask) {
 		circuitBreaker = wp.FallbackCircuitBreaker
 		processor = "fallback"
 	} else {
-		// Both circuit breakers are open, try default first (it has better fees)
 		endpoint = wp.DefaultEndpoint
 		circuitBreaker = wp.DefaultCircuitBreaker
 		processor = "default"
@@ -351,11 +344,9 @@ func (wp *WorkerPools) ProcessPaymentDownstream(task PaymentTask) {
 		return []byte{}, nil
 	})
 
-	// If default processor failed and we haven't tried fallback yet, try fallback
 	if err != nil && processor == "default" && wp.FallbackCircuitBreaker.State() == gobreaker.StateClosed {
 		log.Printf("Default processor failed for %s, trying fallback: %v", correlationID, err)
 
-		// Try fallback processor
 		req, err = http.NewRequest("POST", fmt.Sprintf("%s/payments", wp.FallbackEndpoint), bytes.NewReader(ppPayload))
 		if err != nil {
 			log.Printf("Error creating fallback request for %s: %v", correlationID, err)
@@ -380,7 +371,6 @@ func (wp *WorkerPools) ProcessPaymentDownstream(task PaymentTask) {
 			return []byte{}, nil
 		})
 
-		// If fallback succeeded, update the processor and fee in database to reflect actual processor used
 		if err == nil {
 			wp.updatePaymentProcessorAndFee(correlationID, "fallback", wp.FallbackFee)
 		}
@@ -588,22 +578,22 @@ func main() {
 	defer statsBothPreparedStmt.Close()
 
 	transport := &http.Transport{
-		MaxIdleConns:        20,               // High idle connections
-		MaxIdleConnsPerHost: 20,               // All to same host
-		MaxConnsPerHost:     0,                // No limit
-		IdleConnTimeout:     90 * time.Second, // Keep connections alive
+		MaxIdleConns:        20,
+		MaxIdleConnsPerHost: 20,
+		MaxConnsPerHost:     0,
+		IdleConnTimeout:     90 * time.Second,
 
-		ResponseHeaderTimeout: 1500 * time.Millisecond, // Was 2s
+		ResponseHeaderTimeout: 1500 * time.Millisecond,
 
-		ExpectContinueTimeout: 0, // Disable Expect: 100-continue
+		ExpectContinueTimeout: 0,
 
-		DisableCompression: true,  // No compression overhead
-		DisableKeepAlives:  false, // Keep connections alive
+		DisableCompression: true,
+		DisableKeepAlives:  false,
 
 		DialContext: (&net.Dialer{
-			Timeout:   1000 * time.Millisecond, // Faster connection timeout
-			KeepAlive: 30 * time.Second,        // TCP keepalive
-			DualStack: false,                   // IPv4 only if possible
+			Timeout:   1000 * time.Millisecond,
+			KeepAlive: 30 * time.Second,
+			DualStack: false,
 		}).DialContext,
 
 		ForceAttemptHTTP2: false,
@@ -621,7 +611,6 @@ func main() {
 		},
 	}
 
-	// Default processor circuit breaker
 	var defaultSettings gobreaker.Settings
 	defaultSettings.Name = "Default Payments Breaker"
 	defaultSettings.MaxRequests = 10
@@ -634,7 +623,6 @@ func main() {
 
 	defaultCB = gobreaker.NewCircuitBreaker[[]byte](defaultSettings)
 
-	// Fallback processor circuit breaker
 	var fallbackSettings gobreaker.Settings
 	fallbackSettings.Name = "Fallback Payments Breaker"
 	fallbackSettings.MaxRequests = 10
@@ -647,7 +635,6 @@ func main() {
 
 	fallbackCB = gobreaker.NewCircuitBreaker[[]byte](fallbackSettings)
 
-	// Get fees from both processors
 	defaultPPEndpoint := "http://payment-processor-default:8080"
 	fallbackPPEndpoint := "http://payment-processor-fallback:8080"
 
@@ -689,12 +676,9 @@ func main() {
 			Processor:   "default",
 		}
 
-		err := workerPools.CreationPool.Submit(func() {
+		_ = workerPools.CreationPool.Submit(func() {
 			workerPools.ProcessPaymentCreation(task)
 		})
-		if err != nil {
-			// Pool overwhelmed - drop request silently to maintain low latency
-		}
 
 		return c.Send(nil)
 	})
@@ -742,7 +726,6 @@ func main() {
 		}
 		defer rows.Close()
 
-		// Initialize stats for both processors
 		defaultStats := &PaymentProcessorStats{
 			TotalRequests: 0,
 			TotalAmount:   NewJSONDecimal(decimal.NewFromInt(0)),
@@ -752,7 +735,6 @@ func main() {
 			TotalAmount:   NewJSONDecimal(decimal.NewFromInt(0)),
 		}
 
-		// Process results and populate stats
 		for rows.Next() {
 			var processor string
 			var count int64
