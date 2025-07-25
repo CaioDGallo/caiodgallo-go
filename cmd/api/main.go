@@ -704,10 +704,10 @@ func main() {
 		// log.Default().Fatal("failed to open db connection", err)
 	}
 
-	db.SetMaxOpenConns(50)
-	db.SetMaxIdleConns(25)
-	db.SetConnMaxLifetime(5 * time.Minute)
-	db.SetConnMaxIdleTime(30 * time.Second)
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(4)
+	db.SetConnMaxLifetime(3 * time.Minute)
+	db.SetConnMaxIdleTime(1 * time.Minute)
 
 	_, err = db.Exec(`
 				CREATE TABLE IF NOT EXISTS payment_log(
@@ -771,7 +771,7 @@ func main() {
 		MaxConnsPerHost:     40,
 		IdleConnTimeout:     90 * time.Second,
 
-		ResponseHeaderTimeout: 1500 * time.Millisecond,
+		ResponseHeaderTimeout: 5500 * time.Millisecond,
 
 		ExpectContinueTimeout: 0,
 
@@ -779,7 +779,7 @@ func main() {
 		DisableKeepAlives:  false,
 
 		DialContext: (&net.Dialer{
-			Timeout:   1000 * time.Millisecond,
+			Timeout:   5000 * time.Millisecond,
 			KeepAlive: 30 * time.Second,
 			DualStack: false,
 		}).DialContext,
@@ -792,7 +792,7 @@ func main() {
 
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   2000 * time.Millisecond,
+		Timeout:   6000 * time.Millisecond,
 
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
