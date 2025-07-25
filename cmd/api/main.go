@@ -91,21 +91,36 @@ type PaymentTask struct {
 	Processor   string
 }
 
+type ProcessorHealth struct {
+	Failing         bool `json:"failing"`
+	MinResponseTime int  `json:"minResponseTime"`
+	LastChecked     time.Time
+	IsValid         bool
+}
+
 type WorkerPools struct {
-	CreationPool           *ants.Pool
-	ProcessingPool         *ants.Pool
-	RetryPool              *ants.Pool
-	DB                     *sql.DB
-	DefaultEndpoint        string
-	FallbackEndpoint       string
-	DefaultFee             float64
-	FallbackFee            float64
-	Client                 *http.Client
-	DefaultCircuitBreaker  *gobreaker.CircuitBreaker[[]byte]
-	FallbackCircuitBreaker *gobreaker.CircuitBreaker[[]byte]
-	wg                     sync.WaitGroup
-	ctx                    context.Context
-	cancel                 context.CancelFunc
+	CreationPool            *ants.Pool
+	ProcessingPool          *ants.Pool
+	RetryPool               *ants.Pool
+	DB                      *sql.DB
+	DefaultEndpoint         string
+	FallbackEndpoint        string
+	DefaultFee              float64
+	FallbackFee             float64
+	Client                  *http.Client
+	DefaultCircuitBreaker   *gobreaker.CircuitBreaker[[]byte]
+	FallbackCircuitBreaker  *gobreaker.CircuitBreaker[[]byte]
+	wg                      sync.WaitGroup
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	lastDefaultState        gobreaker.State
+	lastFallbackState       gobreaker.State
+	stateMutex              sync.RWMutex
+	defaultHealth           ProcessorHealth
+	fallbackHealth          ProcessorHealth
+	healthMutex             sync.RWMutex
+	lastDefaultHealthCheck  time.Time
+	lastFallbackHealthCheck time.Time
 }
 
 var (
@@ -145,7 +160,7 @@ func NewWorkerPools(db *sql.DB, defaultEndpoint, fallbackEndpoint string, defaul
 		return nil, fmt.Errorf("failed to create processing pool: %v", err)
 	}
 
-	retryPool, err := ants.NewPool(40, ants.WithOptions(ants.Options{
+	retryPool, err := ants.NewPool(5, ants.WithOptions(ants.Options{
 		ExpiryDuration: 60 * time.Second,
 		Nonblocking:    false,
 		PanicHandler: func(i interface{}) {
@@ -173,6 +188,8 @@ func NewWorkerPools(db *sql.DB, defaultEndpoint, fallbackEndpoint string, defaul
 		FallbackCircuitBreaker: fallbackCB,
 		ctx:                    ctx,
 		cancel:                 cancel,
+		lastDefaultState:       defaultCB.State(),
+		lastFallbackState:      fallbackCB.State(),
 	}
 
 	return wp, nil
@@ -214,10 +231,13 @@ func (wp *WorkerPools) ProcessPaymentCreation(task PaymentTask) {
 	var processor string
 	var fee float64
 
-	if wp.DefaultCircuitBreaker.State() == gobreaker.StateClosed {
+	defaultHealth := wp.getProcessorHealth("default")
+	fallbackHealth := wp.getProcessorHealth("fallback")
+
+	if (defaultHealth.IsValid && !defaultHealth.Failing) || wp.DefaultCircuitBreaker.State() == gobreaker.StateClosed {
 		processor = "default"
 		fee = wp.DefaultFee
-	} else if wp.FallbackCircuitBreaker.State() == gobreaker.StateClosed {
+	} else if (fallbackHealth.IsValid && !fallbackHealth.Failing) || wp.FallbackCircuitBreaker.State() == gobreaker.StateClosed {
 		processor = "fallback"
 		fee = wp.FallbackFee
 	} else {
@@ -306,11 +326,14 @@ func (wp *WorkerPools) ProcessPaymentDownstream(task PaymentTask) {
 	var circuitBreaker *gobreaker.CircuitBreaker[[]byte]
 	var processor string
 
-	if wp.DefaultCircuitBreaker.State() == gobreaker.StateClosed {
+	defaultHealth := wp.getProcessorHealth("default")
+	fallbackHealth := wp.getProcessorHealth("fallback")
+
+	if (defaultHealth.IsValid && !defaultHealth.Failing) || wp.DefaultCircuitBreaker.State() == gobreaker.StateClosed {
 		endpoint = wp.DefaultEndpoint
 		circuitBreaker = wp.DefaultCircuitBreaker
 		processor = "default"
-	} else if wp.FallbackCircuitBreaker.State() == gobreaker.StateClosed {
+	} else if (fallbackHealth.IsValid && !fallbackHealth.Failing) || wp.FallbackCircuitBreaker.State() == gobreaker.StateClosed {
 		endpoint = wp.FallbackEndpoint
 		circuitBreaker = wp.FallbackCircuitBreaker
 		processor = "fallback"
@@ -447,7 +470,17 @@ func (wp *WorkerPools) updatePaymentProcessorAndFee(correlationID, processor str
 
 func (wp *WorkerPools) StartRetryWorker() {
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		instanceID := os.Getenv("INSTANCE_ID")
+		var staggerDelay time.Duration
+		if instanceID == "2" {
+			staggerDelay = 1 * time.Second
+		}
+
+		if staggerDelay > 0 {
+			time.Sleep(staggerDelay)
+		}
+
+		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
 
 		for {
@@ -455,29 +488,173 @@ func (wp *WorkerPools) StartRetryWorker() {
 			case <-wp.ctx.Done():
 				return
 			case <-ticker.C:
+				wp.checkCircuitBreakerStates()
 				wp.processFailedPayments()
 			}
 		}
 	}()
 }
 
-func (wp *WorkerPools) processFailedPayments() {
-	cutoffTime := time.Now().Add(-5 * time.Minute)
+func (wp *WorkerPools) StartHealthCheckWorker() {
+	go func() {
+		instanceID := os.Getenv("INSTANCE_ID")
+		var staggerDelay time.Duration
+		if instanceID == "2" {
+			staggerDelay = 2500 * time.Millisecond
+		}
 
+		if staggerDelay > 0 {
+			time.Sleep(staggerDelay)
+		}
+
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-wp.ctx.Done():
+				return
+			case <-ticker.C:
+				wp.checkProcessorHealth()
+			}
+		}
+	}()
+}
+
+func (wp *WorkerPools) checkCircuitBreakerStates() {
+	wp.stateMutex.Lock()
+	defer wp.stateMutex.Unlock()
+
+	currentDefaultState := wp.DefaultCircuitBreaker.State()
+	currentFallbackState := wp.FallbackCircuitBreaker.State()
+
+	defaultStateChanged := currentDefaultState != wp.lastDefaultState
+	fallbackStateChanged := currentFallbackState != wp.lastFallbackState
+
+	defaultBecameAvailable := defaultStateChanged &&
+		(wp.lastDefaultState == gobreaker.StateOpen || wp.lastDefaultState == gobreaker.StateHalfOpen) &&
+		currentDefaultState == gobreaker.StateClosed
+
+	fallbackBecameAvailable := fallbackStateChanged &&
+		(wp.lastFallbackState == gobreaker.StateOpen || wp.lastFallbackState == gobreaker.StateHalfOpen) &&
+		currentFallbackState == gobreaker.StateClosed
+
+	if defaultBecameAvailable || fallbackBecameAvailable {
+		log.Printf("Circuit breaker became available - triggering immediate retry burst")
+		go wp.processFailedPayments()
+	}
+
+	wp.lastDefaultState = currentDefaultState
+	wp.lastFallbackState = currentFallbackState
+}
+
+func (wp *WorkerPools) checkProcessorHealth() {
+	now := time.Now()
+
+	if now.Sub(wp.lastDefaultHealthCheck) >= 5*time.Second {
+		go wp.checkSingleProcessorHealth(wp.DefaultEndpoint, "default")
+		wp.lastDefaultHealthCheck = now
+	}
+
+	if now.Sub(wp.lastFallbackHealthCheck) >= 5*time.Second {
+		time.Sleep(2500 * time.Millisecond)
+		go wp.checkSingleProcessorHealth(wp.FallbackEndpoint, "fallback")
+		wp.lastFallbackHealthCheck = now.Add(2500 * time.Millisecond)
+	}
+}
+
+func (wp *WorkerPools) checkSingleProcessorHealth(endpoint, processorType string) {
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/payments/service-health", endpoint), nil)
+	if err != nil {
+		log.Printf("Error creating health check request for %s: %v", processorType, err)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := wp.Client.Do(req)
+	if err != nil {
+		log.Printf("Health check failed for %s processor: %v", processorType, err)
+		wp.updateProcessorHealth(processorType, ProcessorHealth{IsValid: false})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 429 {
+		log.Printf("Health check rate limited for %s processor", processorType)
+		return
+	}
+
+	if resp.StatusCode != 200 {
+		log.Printf("Health check returned status %d for %s processor", resp.StatusCode, processorType)
+		wp.updateProcessorHealth(processorType, ProcessorHealth{IsValid: false})
+		return
+	}
+
+	var health ProcessorHealth
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		log.Printf("Error decoding health response for %s processor: %v", processorType, err)
+		wp.updateProcessorHealth(processorType, ProcessorHealth{IsValid: false})
+		return
+	}
+
+	health.LastChecked = time.Now()
+	health.IsValid = true
+
+	wp.updateProcessorHealth(processorType, health)
+
+	if processorType == "default" && !health.Failing {
+		previousHealth := wp.getProcessorHealth("default")
+		if !previousHealth.IsValid || previousHealth.Failing {
+			log.Printf("Default processor became healthy - triggering priority retry burst")
+			go func() {
+				instanceID := os.Getenv("INSTANCE_ID")
+				if instanceID == "2" {
+					time.Sleep(500 * time.Millisecond)
+				}
+				wp.processFailedPayments()
+			}()
+		}
+	}
+}
+
+func (wp *WorkerPools) updateProcessorHealth(processorType string, health ProcessorHealth) {
+	wp.healthMutex.Lock()
+	defer wp.healthMutex.Unlock()
+
+	if processorType == "default" {
+		wp.defaultHealth = health
+	} else {
+		wp.fallbackHealth = health
+	}
+}
+
+func (wp *WorkerPools) getProcessorHealth(processorType string) ProcessorHealth {
+	wp.healthMutex.RLock()
+	defer wp.healthMutex.RUnlock()
+
+	if processorType == "default" {
+		return wp.defaultHealth
+	}
+	return wp.fallbackHealth
+}
+
+func (wp *WorkerPools) processFailedPayments() {
 	rows, err := wp.DB.Query(`
 		SELECT idempotency_key, amount, fee, requested_at 
 		FROM payment_log 
 		WHERE status = 'failed' 
-		AND (processing_started_at IS NULL OR processing_started_at < $1)
 		ORDER BY requested_at ASC 
-		LIMIT 10
-	`, cutoffTime)
+		LIMIT 100`)
 	if err != nil {
 		log.Printf("Failed to query failed payments: %v", err)
 		return
 	}
 	defer rows.Close()
 
+	log.Default().Println("starting retry")
+
+	processedCount := 0
 	for rows.Next() {
 		var correlationID string
 		var amount decimal.Decimal
@@ -499,26 +676,38 @@ func (wp *WorkerPools) processFailedPayments() {
 		}
 
 		wp.wg.Add(1)
+		log.Default().Println("retrying")
 		if err := wp.RetryPool.Submit(func() {
 			defer wp.wg.Done()
 			wp.ProcessPaymentDownstream(task)
+			log.Default().Println("finished retrying attempt")
 		}); err != nil {
 			wp.wg.Done()
 			log.Printf("Failed to submit retry for payment %s: %v", correlationID, err)
+		}
+
+		processedCount++
+		if processedCount%10 == 0 {
+			time.Sleep(50 * time.Millisecond)
 		}
 	}
 }
 
 func main() {
+	instanceID := os.Getenv("INSTANCE_ID")
+	if instanceID == "" {
+		instanceID = "1"
+	}
+
 	connStr := "postgresql://dev:secret123@postgres/onecent?sslmode=disable"
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		log.Default().Fatal("failed to open db connection", err)
 	}
 
-	db.SetMaxOpenConns(15)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(3 * time.Minute)
+	db.SetMaxOpenConns(50)
+	db.SetMaxIdleConns(25)
+	db.SetConnMaxLifetime(5 * time.Minute)
 	db.SetConnMaxIdleTime(30 * time.Second)
 
 	_, err = db.Exec(`
@@ -613,9 +802,9 @@ func main() {
 
 	var defaultSettings gobreaker.Settings
 	defaultSettings.Name = "Default Payments Breaker"
-	defaultSettings.MaxRequests = 10
+	defaultSettings.MaxRequests = 20
 	defaultSettings.Interval = time.Duration(3 * time.Second)
-	defaultSettings.Timeout = time.Duration(3 * time.Second)
+	defaultSettings.Timeout = time.Duration(1500 * time.Millisecond)
 	defaultSettings.ReadyToTrip = func(counts gobreaker.Counts) bool {
 		failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
 		return counts.Requests >= 10 && failureRatio >= 0.6
@@ -625,9 +814,9 @@ func main() {
 
 	var fallbackSettings gobreaker.Settings
 	fallbackSettings.Name = "Fallback Payments Breaker"
-	fallbackSettings.MaxRequests = 10
+	fallbackSettings.MaxRequests = 20
 	fallbackSettings.Interval = time.Duration(3 * time.Second)
-	fallbackSettings.Timeout = time.Duration(3 * time.Second)
+	fallbackSettings.Timeout = time.Duration(1500 * time.Millisecond)
 	fallbackSettings.ReadyToTrip = func(counts gobreaker.Counts) bool {
 		failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
 		return counts.Requests >= 10 && failureRatio >= 0.6
@@ -653,7 +842,8 @@ func main() {
 		log.Default().Fatal("failed to initialize worker pools: ", err)
 	}
 
-	workerPools.StartRetryWorker()
+	// workerPools.StartRetryWorker()
+	workerPools.StartHealthCheckWorker()
 
 	app := fiber.New()
 

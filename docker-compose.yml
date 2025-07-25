@@ -10,7 +10,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.3"
+          cpus: "0.20"
           memory: 30M
     environment:
       - APP_ENV=production
@@ -28,7 +28,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.3"
+          cpus: "0.20"
           memory: 30M
     environment:
       - APP_ENV=production
@@ -48,7 +48,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.15"
+          cpus: "0.10"
           memory: 50M
     depends_on:
       - app1
@@ -63,27 +63,23 @@ services:
       POSTGRES_USER: dev
       POSTGRES_PASSWORD: secret123
       PGDATA: /var/lib/postgresql/data/pgdata
-      # Memory Configuration (240MB total)
-      POSTGRES_SHARED_BUFFERS: 80MB
-      POSTGRES_EFFECTIVE_CACHE_SIZE: 180MB
-      POSTGRES_WAL_BUFFERS: 16MB
-      POSTGRES_WORK_MEM: 2MB
+      # Memory Configuration (140MB total)
+      POSTGRES_SHARED_BUFFERS: 35MB
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 105MB
+      POSTGRES_WAL_BUFFERS: 1075kB
+      POSTGRES_WORK_MEM: 116kB
+      POSTGRES_MAINTENANCE_WORK_MEM: 8960kB
       # Connection Management
-      POSTGRES_MAX_CONNECTIONS: 30
+      POSTGRES_MAX_CONNECTIONS: 300
       # Write-Optimized Settings
-      POSTGRES_CHECKPOINT_TIMEOUT: 60s
       POSTGRES_CHECKPOINT_COMPLETION_TARGET: 0.9
-      POSTGRES_WAL_WRITER_DELAY: 10ms
-      POSTGRES_SYNCHRONOUS_COMMIT: on
+      POSTGRES_MIN_WAL_SIZE: 2GB
+      POSTGRES_MAX_WAL_SIZE: 8GB
       # Performance Tuning
       POSTGRES_RANDOM_PAGE_COST: 1.1
       POSTGRES_EFFECTIVE_IO_CONCURRENCY: 200
       POSTGRES_DEFAULT_STATISTICS_TARGET: 100
-      # Maintenance & Monitoring
-      POSTGRES_LOG_MIN_DURATION_STATEMENT: 500
-      POSTGRES_LOG_CHECKPOINTS: on
-      POSTGRES_LOG_LOCK_WAITS: on
-      POSTGRES_AUTOVACUUM_VACUUM_SCALE_FACTOR: 0.1
+      POSTGRES_HUGE_PAGES: off
     ports:
       - "5433:5432"
     volumes:
@@ -93,8 +89,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.85"
-          memory: 240M
+          cpus: "1"
+          memory: 140M
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U developer -d onecent"]
       interval: 30s
