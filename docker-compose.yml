@@ -10,8 +10,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.20"
-          memory: 30M
+          cpus: "0.4"
+          memory: 90M
+        reservations:
+          cpus: "0.3"
+          memory: 70M
     environment:
       - APP_ENV=production
       - PORT=8080
@@ -28,8 +31,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.20"
-          memory: 30M
+          cpus: "0.4"
+          memory: 90M
+        reservations:
+          cpus: "0.3"
+          memory: 70M
     environment:
       - APP_ENV=production
       - PORT=8080
@@ -39,23 +45,29 @@ services:
     image: haproxy:2.9-alpine
     container_name: haproxy-lb
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 40M
+        reservations:
+          cpus: "0.15"
+          memory: 25M
+    sysctls:
+      - net.core.somaxconn=4096
+      - net.ipv4.tcp_tw_reuse=1
     ports:
       - "9999:80"
     networks:
       - payment-processor
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-    deploy:
-      resources:
-        limits:
-          cpus: "0.10"
-          memory: 50M
     depends_on:
       - app1
       - app2
 
   postgres:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     container_name: postgres_db
     restart: unless-stopped
     command: postgres -c config_file=/etc/postgresql/postgresql.conf
@@ -71,11 +83,15 @@ services:
       - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
     networks:
       - payment-processor
+    shm_size: 64M # Critical for PostgreSQL performance
     deploy:
       resources:
         limits:
-          cpus: "1"
-          memory: 140M
+          cpus: "0.45"
+          memory: 130M
+        reservations:
+          cpus: "0.35"
+          memory: 100M
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dev -d onecent"]
       interval: 30s

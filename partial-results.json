@@ -1,12 +1,12 @@
 {
   "participante": "anonymous",
-  "total_liquido": 272107.08918093337,
-  "total_bruto": 243098.40000000002,
-  "total_taxas": 16409.54,
+  "total_liquido": 289225.314673758,
+  "total_bruto": 288589.80000000005,
+  "total_taxas": 28683.86,
   "descricao": "'total_liquido' é sua pontuação final. Equivale ao seu lucro. Fórmula: total_liquido + (total_liquido * p99.bonus) - (total_liquido * multa.porcentagem)",
   "p99": {
-    "valor": "0.9822538299999992ms",
-    "bonus": 0.20035492340000002,
+    "valor": "5.35961819999998ms",
+    "bonus": 0.11280763600000039,
     "max_requests": 500,
     "descricao": "Fórmula para o bônus: max((11 - p99.valor) * 0.02, 0)"
   },
@@ -19,26 +19,26 @@
     }
   },
   "lag": {
-    "num_pagamentos_total": 12216,
-    "num_pagamentos_solicitados": 15229,
-    "lag": 3013,
+    "num_pagamentos_total": 14502,
+    "num_pagamentos_solicitados": 15222,
+    "lag": 720,
     "descricao": "Lag é a diferença entre a quantidade de solicitações de pagamentos vs o que foi realmente computado pelo backend. Mostra a perda de pagamentos possivelmente por estarem enfileirados."
   },
   "pagamentos_solicitados": {
-    "qtd_sucesso": 15229,
+    "qtd_sucesso": 15222,
     "qtd_falha": 0,
     "descricao": "'qtd_sucesso' foram requests bem sucedidos para 'POST /payments' e 'qtd_falha' os requests com erro."
   },
   "pagamentos_realizados_default": {
-    "total_bruto": 200552.2,
-    "num_pagamentos": 10078,
-    "total_taxas": 10027.61,
+    "total_bruto": 146046.1,
+    "num_pagamentos": 7339,
+    "total_taxas": 7302.305,
     "descricao": "Informações do backend sobre solicitações de pagamento para o Payment Processor Default."
   },
   "pagamentos_realizados_fallback": {
-    "total_bruto": 42546.2,
-    "num_pagamentos": 2138,
-    "total_taxas": 6381.929999999999,
+    "total_bruto": 142543.7,
+    "num_pagamentos": 7163,
+    "total_taxas": 21381.555,
     "descricao": "Informações do backend sobre solicitações de pagamento para o Payment Processor Fallback."
   }
 }
