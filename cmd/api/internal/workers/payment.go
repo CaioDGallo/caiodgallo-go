@@ -15,7 +15,7 @@ import (
 	"github.com/CaioDGallo/caiodgallo-go/cmd/api/internal/types"
 )
 
-func (wp *WorkerPools) ProcessPaymentDirect(task types.PaymentTask) {
+func (wp *WorkerPools) ProcessPaymentDirect(task types.PaymentTask, isRetry bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("Payment processing worker panic recovered: %v", r)
@@ -65,6 +65,10 @@ func (wp *WorkerPools) ProcessPaymentDirect(task types.PaymentTask) {
 		circuitBreaker = wp.FallbackCircuitBreaker
 	}
 
+	if isRetry {
+		circuitBreaker = wp.RetryCircuitBreaker
+	}
+
 	req, err := http.NewRequest("POST", fmt.Sprintf("%s/payments", endpoint), bytes.NewReader(ppPayload))
 	if err != nil {
 		log.Printf("Error creating request for %s: %v", correlationID, err)
@@ -102,7 +106,11 @@ func (wp *WorkerPools) ProcessPaymentDirect(task types.PaymentTask) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Content-Length", strconv.Itoa(len(ppPayload)))
 
-		_, err = wp.FallbackCircuitBreaker.Execute(func() ([]byte, error) {
+		circuitBreaker = wp.FallbackCircuitBreaker
+		if isRetry {
+			circuitBreaker = wp.RetryCircuitBreaker
+		}
+		_, err = circuitBreaker.Execute(func() ([]byte, error) {
 			resp, err := wp.Client.Do(req)
 			if err != nil {
 				return nil, err
@@ -154,16 +162,12 @@ func (wp *WorkerPools) createPaymentRecord(correlationID string, amount decimal.
 	}
 }
 
-
-
-
 func (wp *WorkerPools) processFailedPayments() {
 	rows, err := wp.DB.Query(`
 		SELECT idempotency_key, amount, fee, requested_at 
 		FROM payment_log 
 		WHERE status = 'failed' 
-		ORDER BY requested_at ASC 
-		LIMIT 100`)
+		LIMIT 200`)
 	if err != nil {
 		log.Printf("Failed to query failed payments: %v", err)
 		return
@@ -194,16 +198,14 @@ func (wp *WorkerPools) processFailedPayments() {
 		wp.wg.Add(1)
 		if err := wp.RetryPool.Submit(func() {
 			defer wp.wg.Done()
-			wp.ProcessPaymentDirect(task)
+			wp.ProcessPaymentDirect(task, true)
 		}); err != nil {
 			wp.wg.Done()
 			log.Printf("Failed to submit retry for payment %s: %v", correlationID, err)
 		}
 
 		processedCount++
-		if processedCount%10 == 0 {
-			time.Sleep(50 * time.Millisecond)
-		}
 	}
-}
 
+	log.Default().Println("retrying debug: ", processedCount)
+}

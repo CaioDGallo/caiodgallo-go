@@ -28,6 +28,7 @@ type WorkerPools struct {
 	Client                  *http.Client
 	DefaultCircuitBreaker   *gobreaker.CircuitBreaker[[]byte]
 	FallbackCircuitBreaker  *gobreaker.CircuitBreaker[[]byte]
+	RetryCircuitBreaker     *gobreaker.CircuitBreaker[[]byte]
 	wg                      sync.WaitGroup
 	ctx                     context.Context
 	cancel                  context.CancelFunc
@@ -41,7 +42,7 @@ type WorkerPools struct {
 	lastFallbackHealthCheck time.Time
 }
 
-func NewWorkerPools(db *sql.DB, defaultEndpoint, fallbackEndpoint string, defaultFee, fallbackFee float64, httpClient *http.Client, defaultCB, fallbackCB *gobreaker.CircuitBreaker[[]byte]) (*WorkerPools, error) {
+func NewWorkerPools(db *sql.DB, defaultEndpoint, fallbackEndpoint string, defaultFee, fallbackFee float64, httpClient *http.Client, defaultCB, fallbackCB, retryCB *gobreaker.CircuitBreaker[[]byte]) (*WorkerPools, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	processingPool, err := ants.NewPool(150, ants.WithOptions(ants.Options{
@@ -56,7 +57,7 @@ func NewWorkerPools(db *sql.DB, defaultEndpoint, fallbackEndpoint string, defaul
 		return nil, fmt.Errorf("failed to create processing pool: %v", err)
 	}
 
-	retryPool, err := ants.NewPool(0, ants.WithOptions(ants.Options{
+	retryPool, err := ants.NewPool(150, ants.WithOptions(ants.Options{
 		ExpiryDuration: 60 * time.Second,
 		Nonblocking:    false,
 		PanicHandler: func(i interface{}) {
@@ -72,7 +73,7 @@ func NewWorkerPools(db *sql.DB, defaultEndpoint, fallbackEndpoint string, defaul
 	wp := &WorkerPools{
 		ProcessingPool:         processingPool,
 		RetryPool:              retryPool,
-		PaymentTaskChannel:     make(chan types.PaymentTask, 1000),
+		PaymentTaskChannel:     make(chan types.PaymentTask, 1200),
 		DB:                     db,
 		DefaultEndpoint:        defaultEndpoint,
 		FallbackEndpoint:       fallbackEndpoint,
@@ -81,13 +82,28 @@ func NewWorkerPools(db *sql.DB, defaultEndpoint, fallbackEndpoint string, defaul
 		Client:                 httpClient,
 		DefaultCircuitBreaker:  defaultCB,
 		FallbackCircuitBreaker: fallbackCB,
+		RetryCircuitBreaker:    retryCB,
 		ctx:                    ctx,
 		cancel:                 cancel,
-		lastDefaultState:       defaultCB.State(),
-		lastFallbackState:      fallbackCB.State(),
 	}
 
 	return wp, nil
+}
+
+func (wp *WorkerPools) SetCircuitBreakers(defaultCB, fallbackCB, retryCB *gobreaker.CircuitBreaker[[]byte]) {
+	wp.DefaultCircuitBreaker = defaultCB
+	wp.FallbackCircuitBreaker = fallbackCB
+	wp.RetryCircuitBreaker = retryCB
+	wp.lastDefaultState = defaultCB.State()
+	wp.lastFallbackState = fallbackCB.State()
+}
+
+func (wp *WorkerPools) TriggerRetries() {
+	if wp.DefaultCircuitBreaker == nil || wp.FallbackCircuitBreaker == nil {
+		return
+	}
+	log.Printf("Circuit breaker became available - triggering immediate retry burst")
+	wp.processFailedPayments()
 }
 
 func (wp *WorkerPools) Shutdown(timeout time.Duration) error {
@@ -117,7 +133,7 @@ func (wp *WorkerPools) Shutdown(timeout time.Duration) error {
 }
 
 func (wp *WorkerPools) StartPaymentConsumers() {
-	for i := 0; i < 150; i++ {
+	for range 150 {
 		go func() {
 			for {
 				select {
@@ -130,7 +146,7 @@ func (wp *WorkerPools) StartPaymentConsumers() {
 					wp.wg.Add(1)
 					func() {
 						defer wp.wg.Done()
-						wp.ProcessPaymentDirect(task)
+						wp.ProcessPaymentDirect(task, false)
 					}()
 				}
 			}
@@ -141,16 +157,11 @@ func (wp *WorkerPools) StartPaymentConsumers() {
 func (wp *WorkerPools) StartRetryWorker() {
 	go func() {
 		instanceID := os.Getenv("INSTANCE_ID")
-		var staggerDelay time.Duration
 		if instanceID == "2" {
-			staggerDelay = 1 * time.Second
+			return
 		}
 
-		if staggerDelay > 0 {
-			time.Sleep(staggerDelay)
-		}
-
-		ticker := time.NewTicker(3 * time.Second)
+		ticker := time.NewTicker(3000 * time.Millisecond)
 		defer ticker.Stop()
 
 		for {
@@ -158,8 +169,7 @@ func (wp *WorkerPools) StartRetryWorker() {
 			case <-wp.ctx.Done():
 				return
 			case <-ticker.C:
-				wp.checkCircuitBreakerStates()
-				wp.processFailedPayments()
+				wp.TriggerRetries()
 			}
 		}
 	}()
@@ -185,31 +195,3 @@ func (wp *WorkerPools) getProcessorHealth(processorType string) types.ProcessorH
 	}
 	return wp.fallbackHealth
 }
-
-func (wp *WorkerPools) checkCircuitBreakerStates() {
-	wp.stateMutex.Lock()
-	defer wp.stateMutex.Unlock()
-
-	currentDefaultState := wp.DefaultCircuitBreaker.State()
-	currentFallbackState := wp.FallbackCircuitBreaker.State()
-
-	defaultStateChanged := currentDefaultState != wp.lastDefaultState
-	fallbackStateChanged := currentFallbackState != wp.lastFallbackState
-
-	defaultBecameAvailable := defaultStateChanged &&
-		(wp.lastDefaultState == gobreaker.StateOpen || wp.lastDefaultState == gobreaker.StateHalfOpen) &&
-		currentDefaultState == gobreaker.StateClosed
-
-	fallbackBecameAvailable := fallbackStateChanged &&
-		(wp.lastFallbackState == gobreaker.StateOpen || wp.lastFallbackState == gobreaker.StateHalfOpen) &&
-		currentFallbackState == gobreaker.StateClosed
-
-	if defaultBecameAvailable || fallbackBecameAvailable {
-		log.Printf("Circuit breaker became available - triggering immediate retry burst")
-		go wp.processFailedPayments()
-	}
-
-	wp.lastDefaultState = currentDefaultState
-	wp.lastFallbackState = currentFallbackState
-}
-

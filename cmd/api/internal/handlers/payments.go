@@ -51,4 +51,3 @@ func (h *PaymentHandler) CreatePayment(c fiber.Ctx) error {
 
 	return c.Send(nil)
 }
-

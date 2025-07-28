@@ -24,7 +24,6 @@ func main() {
 	defer preparedStmts.Close()
 
 	httpClient := client.NewHTTPClient()
-	defaultCB, fallbackCB := client.NewCircuitBreakers()
 
 	defaultFee, err := client.GetProcessorFee(httpClient, config.DefaultProcessorEndpoint)
 	if err != nil {
@@ -36,11 +35,16 @@ func main() {
 		log.Fatal("failed getting the fallback processor transaction fee: ", err)
 	}
 
-	workerPools, err := workers.NewWorkerPools(db, config.DefaultProcessorEndpoint, config.FallbackProcessorEndpoint, defaultFee, fallbackFee, httpClient, defaultCB, fallbackCB)
+	workerPools, err := workers.NewWorkerPools(db, config.DefaultProcessorEndpoint, config.FallbackProcessorEndpoint, defaultFee, fallbackFee, httpClient, nil, nil, nil)
 	if err != nil {
 		log.Fatal("failed to initialize worker pools: ", err)
 	}
 
+	defaultCB, fallbackCB, retryCB := client.NewCircuitBreakers(workerPools.TriggerRetries)
+
+	workerPools.SetCircuitBreakers(defaultCB, fallbackCB, retryCB)
+
+	workerPools.StartRetryWorker()
 	workerPools.StartHealthCheckWorker()
 	workerPools.StartPaymentConsumers()
 
